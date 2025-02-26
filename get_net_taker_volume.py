@@ -1,3 +1,4 @@
+import time
 import datetime as dt
 from pathlib import Path
 from enum import Enum
@@ -6,6 +7,7 @@ from typing import Optional, List, Callable
 import pandas as pd
 import typer
 from rich.console import Console
+import multiprocessing as mp
 
 console = Console()
 
@@ -73,8 +75,18 @@ def read_daily_aggtrades(data_dir: str, symbol: str, date: dt.date) -> pd.DataFr
 def calculate_net_taker_volume(
     trades: pd.DataFrame, timeframe: TimeFrame
 ) -> pd.DataFrame:
+    """计算指定时间范围内的净吃单量。
+
+    Args:
+        trades: 包含交易数据的DataFrame
+        timeframe: 时间范围
+
+    Returns:
+        包含净吃单量的DataFrame
+    """
 
     def _resample(df: pd.DataFrame) -> pd.Series:
+        """对DataFrame进行重采样并计算净吃单量。"""
         # 买入吃单，is_buyer_maker=false，卖方使用限价单，买方使用市价单主动买入
         taker_buy_volume = df.query("is_buyer_maker == False")["quantity"].sum()
 
@@ -106,6 +118,7 @@ def process_date_range(
     start_date: dt.date,
     end_date: dt.date,
     timeframe: TimeFrame = TimeFrame.ONE_HOUR,
+    processes: int = 1,
 ) -> pd.DataFrame:
     """处理指定日期范围内的交易数据并计算净吃单量。
 
@@ -114,7 +127,8 @@ def process_date_range(
         symbol: 交易对符号
         start_date: 开始日期
         end_date: 结束日期
-        timeframe: 时间框架，默认为1小时
+        timeframe: 时间范围，默认为1小时
+        processes: 用于并行处理的进程数
 
     Returns:
         包含净吃单量的DataFrame
@@ -125,25 +139,34 @@ def process_date_range(
         for i in range((end_date - start_date).days + 1)
     ]
 
-    # 读取每一天的数据并合并
-    all_data = []
-    for date in date_range:
+    def _process_date(date: dt.date) -> Optional[pd.DataFrame]:
+        """读取、处理单日数据并计算净吃单量。"""
         try:
             df = read_daily_aggtrades(data_dir, symbol, date)
-            all_data.append(df)
+            daily_result = calculate_net_taker_volume(df, timeframe)
+            return daily_result
         except Exception as e:
             console.print(f"[yellow]Warning: Could not read data for {date}: {e}[/]")
+            return None
+
+    # 使用多进程并行处理
+    if processes > 1:
+        with mp.Pool(processes=processes) as pool:
+            all_data = pool.map(_process_date, date_range)
+    else:
+        all_data = [_process_date(date) for date in date_range]
+
+    # 过滤掉None值
+    all_data = [df for df in all_data if df is not None]
 
     if not all_data:
         console.print("[red]Error: No data found[/]")
         raise typer.Exit(code=1)
 
     # 合并所有日期的数据
-    combined_df = pd.concat(all_data)
-    combined_df.sort_index(inplace=True)
+    result = pd.concat(all_data)
+    # result.sort_index(inplace=True) # 不需要排序，因为每天的数据已经排序
 
-    # 计算净吃单量
-    result = calculate_net_taker_volume(combined_df, timeframe)
     return result
 
 
@@ -160,7 +183,7 @@ def parse_date(date_str: str) -> dt.date:
         解析后的日期对象
 
     Raises:
-        ValueError: 当日期格式不正确时抛出
+        typer.BadParameter: 如果日期格式不正确
     """
     try:
         return dt.datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -172,38 +195,47 @@ def parse_date(date_str: str) -> dt.date:
 
 @app.command()
 def main(
-    data_dir: str = typer.Option(..., help="Folder path to store trading data"),
-    symbol: str = typer.Option(..., help="Trading pair name, e.g. BTCUSDT"),
+    data_dir: str = typer.Option(..., help="存储交易数据的文件夹路径"),
+    symbol: str = typer.Option(..., help="交易对名称，例如 BTCUSDT"),
     start_date: str = typer.Option(
-        ..., help="Start date (YYYY-MM-DD)", callback=parse_date
+        ..., help="开始日期 (YYYY-MM-DD)", callback=parse_date
     ),
     end_date: str = typer.Option(
-        ..., help="End date (YYYY-MM-DD)", callback=parse_date
+        ..., help="结束日期 (YYYY-MM-DD)", callback=parse_date
     ),
-    timeframe: TimeFrame = typer.Option(TimeFrame.ONE_HOUR, help="Timeframe"),
-    output_csv: Optional[Path] = typer.Option(None, help="Output CSV file path"),
+    timeframe: TimeFrame = typer.Option(TimeFrame.ONE_HOUR, help="时间范围"),
+    output_csv: Optional[Path] = typer.Option(None, help="输出 CSV 文件路径"),
+    processes: int = typer.Option(1, help="用于并行处理的进程数"),
 ) -> None:
     """计算指定日期范围内的净吃单量并输出结果。"""
-    console.print(f"Processing data for {symbol} from {start_date} to {end_date}...")
+    console.print(
+        f"正在处理 {symbol} 从 {start_date} 到 {end_date} 的数据，使用 {processes} 个进程..."
+    )
+
+    t0 = time.time()
 
     try:
-        result = process_date_range(data_dir, symbol, start_date, end_date, timeframe)
+        result = process_date_range(
+            data_dir, symbol, start_date, end_date, timeframe, processes
+        )
 
         # 显示结果摘要
-        console.print("\n[bold]Results Summary:[/]")
-        console.print(f"Total records: {len(result)}")
-        console.print("\n[bold]First 5 records:[/]")
+        console.print("\n[bold]结果摘要:[/]")
+        console.print(f"总记录数: {len(result)}")
+        console.print("\n[bold]前 5 条记录:[/]")
         console.print(result.head())
-        console.print("\n[bold]Last 5 records:[/]")
+        console.print("\n[bold]后 5 条记录:[/]")
         console.print(result.tail())
 
         # 如果指定了输出文件，保存为CSV
         if output_csv:
             result.to_csv(output_csv, index=True)
-            console.print(f"\nResults saved to: {output_csv}")
+            console.print(f"\n结果已保存到: {output_csv}")
+
+        console.print(f"Tasks completed in {time.time() - t0:.2f} seconds")
 
     except Exception as e:
-        console.print(f"[red]Error processing  {e}[/]")
+        console.print(f"[red]处理错误 {e}[/]")
         raise typer.Exit(code=1)
 
 
