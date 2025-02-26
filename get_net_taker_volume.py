@@ -1,13 +1,13 @@
-import time
 import datetime as dt
-from pathlib import Path
+import multiprocessing as mp
+import time
 from enum import Enum
-from typing import Optional, List, Callable
+from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import typer
 from rich.console import Console
-import multiprocessing as mp
 
 console = Console()
 
@@ -17,13 +17,13 @@ class TimeFrame(str, Enum):
     K线时间框架枚举类，成员的值与 pandas.resample 的重采样频率相对应。
     """
 
-    ONE_MINUTE = "1T"  # 1 分钟
-    FIVE_MINUTES = "5T"  # 5 分钟
-    FIFTEEN_MINUTES = "15T"  # 15 分钟
-    THIRTY_MINUTES = "30T"  # 30 分钟
+    ONE_MINUTE = "1min"  # 1 分钟
+    FIVE_MINUTES = "5min"  # 5 分钟
+    FIFTEEN_MINUTES = "15min"  # 15 分钟
+    THIRTY_MINUTES = "30min"  # 30 分钟
     ONE_HOUR = "1h"  # 1 小时
     FOUR_HOURS = "4h"  # 4 小时
-    ONE_DAY = "1D"  # 1 天
+    ONE_DAY = "D"  # 1 天
 
 
 def read_daily_aggtrades(data_dir: str, symbol: str, date: dt.date) -> pd.DataFrame:
@@ -170,7 +170,7 @@ def process_date_range(
         with mp.Pool(processes=processes) as pool:
             all_data = pool.starmap(
                 _process_single_date,
-                [(date, data_dir, symbol, timeframe) for date in date_range]
+                [(date, data_dir, symbol, timeframe) for date in date_range],
             )
     else:
         all_data = [
@@ -182,12 +182,10 @@ def process_date_range(
     all_data = [df for df in all_data if df is not None]
 
     if not all_data:
-        console.print("[red]Error: No data found[/]")
-        raise typer.Exit(code=1)
+        raise Exception(f"No data found")
 
     # 合并所有日期的数据
     result = pd.concat(all_data)
-    # result.sort_index(inplace=True) # 不需要排序，因为每天的数据已经排序
 
     return result
 
@@ -195,41 +193,28 @@ def process_date_range(
 app = typer.Typer(help="计算加密货币交易的净吃单量", add_completion=False)
 
 
-def parse_date(date_str: str) -> dt.date:
-    """将字符串解析为日期对象。
-
-    Args:
-        date_str: 格式为 YYYY-MM-DD 的日期字符串
-
-    Returns:
-        解析后的日期对象
-
-    Raises:
-        typer.BadParameter: 如果日期格式不正确
-    """
-    try:
-        return dt.datetime.strptime(date_str, "%Y-%m-%d").date()
-    except ValueError:
-        raise typer.BadParameter(
-            f"Incorrect date format: {date_str}, please use YYYY-MM-DD format"
-        )
-
-
 @app.command()
 def main(
     data_dir: str = typer.Option(..., help="存储交易数据的文件夹路径"),
     symbol: str = typer.Option(..., help="交易对名称，例如 BTCUSDT"),
-    start_date: str = typer.Option(
-        ..., help="开始日期 (YYYY-MM-DD)", callback=parse_date
+    start_date: dt.datetime = typer.Option(
+        ...,
+        help="开始日期 (YYYY-MM-DD)",
+        formats=["%Y-%m-%d"],
     ),
-    end_date: str = typer.Option(
-        ..., help="结束日期 (YYYY-MM-DD)", callback=parse_date
+    end_date: dt.datetime = typer.Option(
+        ...,
+        help="结束日期 (YYYY-MM-DD)",
+        formats=["%Y-%m-%d"],
     ),
     timeframe: TimeFrame = typer.Option(TimeFrame.ONE_HOUR, help="时间范围"),
     output_csv: Optional[Path] = typer.Option(None, help="输出 CSV 文件路径"),
     processes: int = typer.Option(1, help="用于并行处理的进程数"),
 ) -> None:
     """计算指定日期范围内的净吃单量并输出结果。"""
+    start_date = start_date.date()
+    end_date = end_date.date()
+
     console.print(
         f"Processing {symbol} data from {start_date} to {end_date} using {processes} processes..."
     )
