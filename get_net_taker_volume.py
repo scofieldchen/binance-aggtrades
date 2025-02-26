@@ -134,7 +134,7 @@ def _process_single_date(
         daily_result = calculate_net_taker_volume(df, timeframe)
         return daily_result
     except Exception as e:
-        console.print(f"[yellow]Warning: Could not read data for {date}: {e}[/]")
+        console.print(f"[yellow]Warning: Failed to process data for {date}: {e}[/]")
         return None
 
 
@@ -231,7 +231,7 @@ def main(
 ) -> None:
     """计算指定日期范围内的净吃单量并输出结果。"""
     console.print(
-        f"正在处理 {symbol} 从 {start_date} 到 {end_date} 的数据，使用 {processes} 个进程..."
+        f"Processing {symbol} data from {start_date} to {end_date} using {processes} processes..."
     )
 
     t0 = time.time()
@@ -241,23 +241,23 @@ def main(
             data_dir, symbol, start_date, end_date, timeframe, processes
         )
 
-        # 显示结果摘要
-        console.print("\n[bold]结果摘要:[/]")
-        console.print(f"总记录数: {len(result)}")
-        console.print("\n[bold]前 5 条记录:[/]")
+        # Display result summary
+        console.print("\n[bold]Result Summary:[/]")
+        console.print(f"Total records: {len(result)}")
+        console.print("\n[bold]First 5 records:[/]")
         console.print(result.head())
-        console.print("\n[bold]后 5 条记录:[/]")
+        console.print("\n[bold]Last 5 records:[/]")
         console.print(result.tail())
 
-        # 如果指定了输出文件，保存为CSV
+        # Save to CSV if output file is specified
         if output_csv:
             result.to_csv(output_csv, index=True)
-            console.print(f"\n结果已保存到: {output_csv}")
+            console.print(f"\nResults saved to: {output_csv}")
 
         console.print(f"Tasks completed in {time.time() - t0:.2f} seconds")
 
     except Exception as e:
-        console.print(f"[red]处理错误 {e}[/]")
+        console.print(f"[red]Processing error: {e}[/]")
         raise typer.Exit(code=1)
 
 
