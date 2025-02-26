@@ -14,15 +14,11 @@
 - `isbuymaker = true`：表示买方是挂单方，卖方使用市价单成交，属于卖出吃单
 - `isbuyermaker = false`：表示卖方是挂单方，买方使用市价单成交，属于买入吃单
 
-用户指定资产和时间范围（开始时间，结束时间），使用多进程来处理数据。
+命令行界面
 
-将净持仓量数据存储到本地csv。
-
-字段
-- datetime
-- open
-- high
-- low
-- close
-- volume
-- net_taker_volume
+命令行参数
+- data_dir: 存储交易数据的文件夹
+- symbol: 交易对名称，无分隔符
+- start_date: 开始时间
+- end_date: 结束时间
+- output_csv: 输出csv文件
