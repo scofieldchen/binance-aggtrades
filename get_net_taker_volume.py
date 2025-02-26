@@ -5,6 +5,9 @@ from typing import Optional, List, Callable
 
 import pandas as pd
 import typer
+from rich.console import Console
+
+console = Console()
 
 
 class TimeFrame(str, Enum):
@@ -49,14 +52,14 @@ def read_daily_aggtrades(data_dir: str, symbol: str, date: dt.date) -> pd.DataFr
 
     # 检查目录是否存在
     if not data_path_by_symbol_date.exists():
-        raise FileNotFoundError(f"数据目录不存在: {data_path_by_symbol_date}")
+        raise FileNotFoundError(f"Data directory not found: {data_path_by_symbol_date}")
 
     # 获取所有parquet文件
     files = list(data_path_by_symbol_date.glob("*.parquet"))
 
     # 检查是否有数据文件
     if not files:
-        raise ValueError(f"在 {data_path_by_symbol_date} 中没有找到任何parquet文件")
+        raise ValueError(f"No parquet files found in {data_path_by_symbol_date}")
 
     # 读取并合并所有文件
     df = pd.concat((pd.read_parquet(file) for file in files))
@@ -129,10 +132,10 @@ def process_date_range(
             df = read_daily_aggtrades(data_dir, symbol, date)
             all_data.append(df)
         except Exception as e:
-            typer.echo(f"警告: 无法读取 {date} 的数据: {e}")
+            console.print(f"[yellow]Warning: Could not read data for {date}: {e}[/]")
 
     if not all_data:
-        typer.echo("错误: 没有找到任何数据")
+        console.print("[red]Error: No data found[/]")
         raise typer.Exit(code=1)
 
     # 合并所有日期的数据
@@ -162,43 +165,45 @@ def parse_date(date_str: str) -> dt.date:
     try:
         return dt.datetime.strptime(date_str, "%Y-%m-%d").date()
     except ValueError:
-        raise typer.BadParameter(f"日期格式不正确: {date_str}，请使用 YYYY-MM-DD 格式")
+        raise typer.BadParameter(
+            f"Incorrect date format: {date_str}, please use YYYY-MM-DD format"
+        )
 
 
 @app.command()
 def main(
-    data_dir: str = typer.Option(..., help="存储交易数据的文件夹路径"),
-    symbol: str = typer.Option(..., help="交易对名称，如BTCUSDT"),
+    data_dir: str = typer.Option(..., help="Folder path to store trading data"),
+    symbol: str = typer.Option(..., help="Trading pair name, e.g. BTCUSDT"),
     start_date: str = typer.Option(
-        ..., help="开始日期 (YYYY-MM-DD)", callback=parse_date
+        ..., help="Start date (YYYY-MM-DD)", callback=parse_date
     ),
     end_date: str = typer.Option(
-        ..., help="结束日期 (YYYY-MM-DD)", callback=parse_date
+        ..., help="End date (YYYY-MM-DD)", callback=parse_date
     ),
-    timeframe: TimeFrame = typer.Option(TimeFrame.ONE_HOUR, help="时间框架"),
-    output_csv: Optional[Path] = typer.Option(None, help="输出CSV文件路径"),
+    timeframe: TimeFrame = typer.Option(TimeFrame.ONE_HOUR, help="Timeframe"),
+    output_csv: Optional[Path] = typer.Option(None, help="Output CSV file path"),
 ) -> None:
     """计算指定日期范围内的净吃单量并输出结果。"""
-    typer.echo(f"正在处理 {symbol} 从 {start_date} 到 {end_date} 的数据...")
+    console.print(f"Processing data for {symbol} from {start_date} to {end_date}...")
 
     try:
         result = process_date_range(data_dir, symbol, start_date, end_date, timeframe)
 
         # 显示结果摘要
-        typer.echo("\n结果摘要:")
-        typer.echo(f"总记录数: {len(result)}")
-        typer.echo("\n前5条记录:")
-        typer.echo(result.head())
-        typer.echo("\n后5条记录:")
-        typer.echo(result.tail())
+        console.print("\n[bold]Results Summary:[/]")
+        console.print(f"Total records: {len(result)}")
+        console.print("\n[bold]First 5 records:[/]")
+        console.print(result.head())
+        console.print("\n[bold]Last 5 records:[/]")
+        console.print(result.tail())
 
         # 如果指定了输出文件，保存为CSV
         if output_csv:
-            result.to_csv(output_csv)
-            typer.echo(f"\n结果已保存到: {output_csv}")
+            result.to_csv(output_csv, index=True)
+            console.print(f"\nResults saved to: {output_csv}")
 
     except Exception as e:
-        typer.echo(f"处理数据时出错: {e}")
+        console.print(f"[red]Error processing  {e}[/]")
         raise typer.Exit(code=1)
 
 
