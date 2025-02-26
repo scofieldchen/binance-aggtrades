@@ -112,6 +112,32 @@ def calculate_net_taker_volume(
     return res
 
 
+def _process_single_date(
+    date: dt.date,
+    data_dir: str,
+    symbol: str,
+    timeframe: TimeFrame,
+) -> Optional[pd.DataFrame]:
+    """读取并处理单日数据，计算净吃单量。
+
+    Args:
+        date: 要处理的日期
+        data_dir: 数据目录路径
+        symbol: 交易对符号
+        timeframe: 时间范围
+
+    Returns:
+        处理后的DataFrame，如果处理失败则返回None
+    """
+    try:
+        df = read_daily_aggtrades(data_dir, symbol, date)
+        daily_result = calculate_net_taker_volume(df, timeframe)
+        return daily_result
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not read data for {date}: {e}[/]")
+        return None
+
+
 def process_date_range(
     data_dir: str,
     symbol: str,
@@ -139,22 +165,18 @@ def process_date_range(
         for i in range((end_date - start_date).days + 1)
     ]
 
-    def _process_date(date: dt.date) -> Optional[pd.DataFrame]:
-        """读取、处理单日数据并计算净吃单量。"""
-        try:
-            df = read_daily_aggtrades(data_dir, symbol, date)
-            daily_result = calculate_net_taker_volume(df, timeframe)
-            return daily_result
-        except Exception as e:
-            console.print(f"[yellow]Warning: Could not read data for {date}: {e}[/]")
-            return None
-
     # 使用多进程并行处理
     if processes > 1:
         with mp.Pool(processes=processes) as pool:
-            all_data = pool.map(_process_date, date_range)
+            all_data = pool.starmap(
+                _process_single_date,
+                [(date, data_dir, symbol, timeframe) for date in date_range]
+            )
     else:
-        all_data = [_process_date(date) for date in date_range]
+        all_data = [
+            _process_single_date(date, data_dir, symbol, timeframe)
+            for date in date_range
+        ]
 
     # 过滤掉None值
     all_data = [df for df in all_data if df is not None]
