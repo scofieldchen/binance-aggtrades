@@ -31,3 +31,7 @@ https://data.binance.vision/
 - is the trade best price match
 
 ## 优化数据存储模块
+
+wal是什么？解决什么问题？
+
+数据分区逻辑发生变化，资产类别（现货/合约）-> 交易对 -> 年份 -> 月份 -> 按日存储。

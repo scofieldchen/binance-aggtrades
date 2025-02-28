@@ -23,10 +23,9 @@ class AggTradesStore:
         self.base_dir = Path(base_dir)
         self.metadata_dir = self.base_dir / "metadata"
         self.stats_dir = self.metadata_dir / "stats"
-        self.wal_dir = self.metadata_dir / "wal"
 
         # Create directory structure
-        for directory in [self.metadata_dir, self.stats_dir, self.wal_dir]:
+        for directory in [self.metadata_dir, self.stats_dir]:
             directory.mkdir(parents=True, exist_ok=True)
 
         # Initialize bloom filter for trade_id lookups
@@ -84,15 +83,6 @@ class AggTradesStore:
 
             file_path = directory / filename
 
-            # Write WAL entry
-            wal_entry = {
-                "timestamp": timestamp.isoformat(),
-                "symbol": symbol,
-                "path": str(file_path),
-                "num_trades": len(hour_df),
-            }
-            self._write_wal(wal_entry)
-
             # Convert to Arrow table
             table = pa.Table.from_pandas(hour_df)
 
@@ -117,15 +107,6 @@ class AggTradesStore:
             for trade_id in hour_df.trade_id:
                 self.trade_id_filter.add(trade_id)
 
-    def _write_wal(self, entry: Dict) -> None:
-        """Write entry to WAL file.
-
-        Args:
-            entry: Dictionary containing WAL entry data
-        """
-        wal_path = self.wal_dir / f"wal_{dt.datetime.now():%Y%m%d_%H%M%S_%f}.json"
-        with open(wal_path, "w") as f:
-            json.dump(entry, f)
 
     def _update_file_stats(self, file_path: Path, df: pd.DataFrame) -> None:
         """Update statistics for a data file.
