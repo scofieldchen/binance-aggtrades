@@ -8,7 +8,6 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pybloom_live import ScalableBloomFilter
 
 from aggtrades_fetcher import MarketType
 
@@ -29,14 +28,6 @@ class AggTradesStore:
         # Create directory structure
         for directory in [self.metadata_dir, self.stats_dir]:
             directory.mkdir(parents=True, exist_ok=True)
-
-        # Initialize bloom filter for trade_id lookups
-        self.trade_id_filter = ScalableBloomFilter(
-            mode=ScalableBloomFilter.SMALL_SET_GROWTH
-        )
-
-        # Load existing metadata
-        self._load_metadata()
 
     def _get_path_components(
         self, market_type: MarketType, symbol: str, date: dt.date
@@ -88,7 +79,6 @@ class AggTradesStore:
         for date, day_df in trades_df.groupby(trades_df.timestamp.dt.date):
             directory, filename = self._get_path_components(market_type, symbol, date)
             directory.mkdir(parents=True, exist_ok=True)
-
             file_path = directory / filename
 
             # 转换为Arrow表
@@ -101,26 +91,19 @@ class AggTradesStore:
                 else:
                     # 如果不覆盖但需要追加，则读取现有数据，合并后重写
                     existing_df = pd.read_parquet(file_path)
-                    # 合并数据，确保没有重复的trade_id
                     combined_df = pd.concat([existing_df, day_df]).drop_duplicates(
                         subset=["trade_id"]
                     )
-                    # 按时间戳排序
                     combined_df = combined_df.sort_values("timestamp")
-                    # 转换为Arrow表并写入
                     table = pa.Table.from_pandas(combined_df)
                     pq.write_table(table, file_path, compression="snappy")
 
                     # 更新元数据
                     self._update_file_stats(file_path, combined_df)
 
-                    # 更新布隆过滤器
-                    for trade_id in day_df.trade_id:
-                        self.trade_id_filter.add(trade_id)
-
                     continue
 
-            # 使用更简单的参数写入parquet文件
+            # 直接存储数据
             pq.write_table(
                 table,
                 file_path,
@@ -129,10 +112,6 @@ class AggTradesStore:
 
             # 更新元数据
             self._update_file_stats(file_path, day_df)
-
-            # 更新布隆过滤器
-            for trade_id in day_df.trade_id:
-                self.trade_id_filter.add(trade_id)
 
     def _update_file_stats(self, file_path: Path, df: pd.DataFrame) -> None:
         """Update statistics for a data file.
@@ -153,15 +132,6 @@ class AggTradesStore:
         stats_path = self.stats_dir / f"{file_path.stem}_stats.json"
         with open(stats_path, "w") as f:
             json.dump(stats, f)
-
-    def _load_metadata(self) -> None:
-        """Load existing metadata and rebuild indices."""
-        # Load existing trade IDs into bloom filter
-        for stats_file in self.stats_dir.glob("*_stats.json"):
-            with open(stats_file) as f:
-                stats = json.load(f)
-                for trade_id in range(stats["min_trade_id"], stats["max_trade_id"] + 1):
-                    self.trade_id_filter.add(trade_id)
 
     def get_collection_stats(
         self, market_type: Optional[MarketType] = None, symbol: Optional[str] = None
