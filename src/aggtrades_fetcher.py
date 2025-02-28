@@ -54,8 +54,18 @@ class APIAggTradesFetcher(AggTradesFetcher):
 
         Args:
             market_type: 市场类型，默认为现货
+
+        Raises:
+            NotImplementedError: 当选择尚未实现的市场类型时
         """
         self.market_type = market_type
+
+        # 检查是否支持该市场类型
+        if market_type != MarketType.SPOT:
+            raise NotImplementedError(
+                f"Market type {market_type.value} not supported yet!"
+            )
+
         self.base_url = self._get_base_url()
 
     def _get_base_url(self) -> str:
@@ -71,7 +81,7 @@ class APIAggTradesFetcher(AggTradesFetcher):
         elif self.market_type == MarketType.COIN_FUTURES:
             return "https://dapi.binance.com/dapi/v1/aggTrades"
         else:
-            raise ValueError(f"不支持的市场类型: {self.market_type}")
+            raise ValueError(f"Invalid market type: {self.market_type}")
 
     def fetch_hourly_trades(
         self,
@@ -81,7 +91,7 @@ class APIAggTradesFetcher(AggTradesFetcher):
         limit: int = 1000,
         request_delay: float = 0.05,
     ) -> pd.DataFrame:
-        """获取指定小时的聚合交易数据。
+        """获取指定小时的聚合交易数据
 
         Args:
             symbol: 交易对名称
@@ -105,7 +115,7 @@ class APIAggTradesFetcher(AggTradesFetcher):
             wait=wait_exponential(multiplier=1, min=2, max=10),
         )
         def _fetch_trades(start_time: int, end_time: int) -> List[dict]:
-            """带重试逻辑的交易数据获取辅助函数。"""
+            """带重试逻辑的交易数据获取辅助函数"""
             params = {
                 "symbol": symbol,
                 "startTime": start_time,
@@ -180,7 +190,7 @@ class APIAggTradesFetcher(AggTradesFetcher):
     def fetch_daily_trades(
         self, symbol: str, date: dt.date, limit: int = 1000, request_delay: float = 0.05
     ) -> pd.DataFrame:
-        """获取指定日期的所有聚合交易数据。
+        """获取指定日期的所有聚合交易数据
 
         Args:
             symbol: 交易对名称
@@ -203,19 +213,29 @@ class APIAggTradesFetcher(AggTradesFetcher):
 
 
 class HistoricalAggTradesFetcher(AggTradesFetcher):
-    """从历史数据仓库获取聚合交易数据。"""
+    """从历史数据仓库获取聚合交易数据"""
 
     def __init__(self, market_type: MarketType = MarketType.SPOT):
-        """初始化历史数据获取器。
+        """初始化历史数据获取器
 
         Args:
             market_type: 市场类型，默认为现货
+
+        Raises:
+            NotImplementedError: 当选择尚未实现的市场类型时
         """
         self.market_type = market_type
+
+        # 检查是否支持该市场类型
+        if market_type != MarketType.SPOT:
+            raise NotImplementedError(
+                f"Market type {market_type.value} not supported yet!"
+            )
+
         self.base_url = self._get_base_url()
 
     def _get_base_url(self) -> str:
-        """根据市场类型获取基础URL。
+        """根据市场类型获取基础URL
 
         Returns:
             历史数据仓库基础URL
@@ -227,13 +247,13 @@ class HistoricalAggTradesFetcher(AggTradesFetcher):
         elif self.market_type == MarketType.COIN_FUTURES:
             return "https://data.binance.vision/data/futures/cm/daily/aggTrades"
         else:
-            raise ValueError(f"不支持的市场类型: {self.market_type}")
+            raise ValueError(f"Invalid market type: {self.market_type}")
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
     )
     def fetch_daily_trades(self, symbol: str, date: dt.date) -> pd.DataFrame:
-        """从Binance历史数据仓库下载聚合交易数据。
+        """从Binance历史数据仓库下载聚合交易数据
 
         下载指定交易对和日期的历史聚合交易数据，解压并转换为DataFrame格式。
         数据来源于Binance公共数据仓库。
@@ -262,7 +282,7 @@ class HistoricalAggTradesFetcher(AggTradesFetcher):
 
         # 下载文件
         response = requests.get(url, stream=True)
-        response.raise_for_status()  # 如果请求失败会抛出异常
+        response.raise_for_status()
 
         # 使用内存中的BytesIO对象处理zip文件，避免写入磁盘
         with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
@@ -289,21 +309,17 @@ class HistoricalAggTradesFetcher(AggTradesFetcher):
                     ],
                 )
 
-        # 转换数据类型
-        df["trade_id"] = df["trade_id"].astype("int64")
+        # 处理日期字段，时间戳精确到微妙
         df["timestamp"] = pd.to_datetime(
             df["timestamp"].astype("int64"), unit="us", utc=True
         )
-        df["price"] = df["price"].astype("float64")
-        df["quantity"] = df["quantity"].astype("float64")
-        df["is_buyer_maker"] = df["is_buyer_maker"].astype("bool")
 
         # 只保留与API获取器输出一致的列
         return df[["trade_id", "timestamp", "price", "quantity", "is_buyer_maker"]]
 
 
 class AggTradesFetcherFactory:
-    """聚合交易数据获取器工厂。"""
+    """聚合交易数据获取器工厂"""
 
     _fetchers: Dict[DataSource, Dict[MarketType, Type[AggTradesFetcher]]] = {
         DataSource.API: {
@@ -338,4 +354,6 @@ class AggTradesFetcherFactory:
             fetcher_class = cls._fetchers[data_source][market_type]
             return fetcher_class(market_type=market_type)
         except KeyError:
-            raise ValueError(f"不支持的数据源或市场类型: {data_source}, {market_type}")
+            raise ValueError(
+                f"Invalid market type or source: {data_source}, {market_type}"
+            )
