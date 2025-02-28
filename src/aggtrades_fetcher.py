@@ -10,7 +10,12 @@ from typing import Dict, List, Type
 
 import pandas as pd
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 
 
 class DataSource(Enum):
@@ -250,7 +255,15 @@ class HistoricalAggTradesFetcher(AggTradesFetcher):
             raise ValueError(f"Invalid market type: {self.market_type}")
 
     @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(
+            (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError,
+            )
+        ),
     )
     def fetch_daily_trades(self, symbol: str, date: dt.date) -> pd.DataFrame:
         """从Binance历史数据仓库下载聚合交易数据
@@ -271,9 +284,10 @@ class HistoricalAggTradesFetcher(AggTradesFetcher):
             - is_buyer_maker: 买方是否为挂单方
 
         Raises:
-            requests.exceptions.HTTPError: 当请求失败或文件不存在时
+            requests.exceptions.HTTPError: 当请求失败或文件不存在时（如404错误）
             zipfile.BadZipFile: 当下载的文件不是有效的zip文件时
             ValueError: 当解析数据失败时
+            FileNotFoundError: 当zip文件中找不到CSV文件时
         """
         # 构建URL
         date_str = date.strftime("%Y-%m-%d")
@@ -282,14 +296,13 @@ class HistoricalAggTradesFetcher(AggTradesFetcher):
 
         # 下载文件
         response = requests.get(url, stream=True)
-        response.raise_for_status()
+        response.raise_for_status()  # 如果是404等错误，这里会抛出异常，不会重试
 
         # 使用内存中的BytesIO对象处理zip文件，避免写入磁盘
         with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
             # 获取zip文件中的CSV文件名（通常只有一个文件）
-            csv_filename = [
-                name for name in zip_file.namelist() if name.endswith(".csv")
-            ][0]
+            csv_files = [name for name in zip_file.namelist() if name.endswith(".csv")]
+            csv_filename = csv_files[0]
 
             # 读取CSV文件内容
             with zip_file.open(csv_filename) as csv_file:
