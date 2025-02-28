@@ -1,4 +1,4 @@
-"""Binance aggregated trades data storage management."""
+"""存储聚合历史交易数据。"""
 
 import datetime as dt
 from pathlib import Path
@@ -7,7 +7,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from aggtrades_fetcher import MarketType
+from .aggtrades_fetcher import MarketType
 
 
 def get_file_path(

@@ -1,4 +1,4 @@
-"""Fetch aggregated trades data from Binance."""
+"""获取 Binance 交易所的聚合历史交易数据。"""
 
 import datetime as dt
 import io
