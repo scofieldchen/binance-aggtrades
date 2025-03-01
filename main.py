@@ -2,10 +2,18 @@
 
 import datetime as dt
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import typer
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    BarColumn,
+    TextColumn,
+    TimeRemainingColumn,
+    TimeElapsedColumn,
+    TaskID,
+)
 
 from src.aggtrades_fetcher import (
     AggTradesFetcherFactory,
@@ -119,51 +127,69 @@ def download(
     # 创建数据获取器
     fetcher = AggTradesFetcherFactory.create_fetcher(data_source, market_type)
 
-    # 生成所有需要处理的任务
-    tasks: List[Tuple[str, dt.date]] = []
-    for symbol in symbols.upper().split(","):
+    # 按交易对组织任务
+    symbol_tasks: Dict[str, List[dt.date]] = {}
+    symbols = symbols.upper().split(",")
+
+    for symbol in symbols:
+        symbol_tasks[symbol] = []
         current_date = start
         while current_date <= end:
-            tasks.append((symbol, current_date))
+            symbol_tasks[symbol].append(current_date)
             current_date += dt.timedelta(days=1)
 
-    # 使用Rich创建进度显示
+    # 使用Rich创建进度面板
     with Progress(
-        SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeRemainingColumn(),
         TimeElapsedColumn(),
+        SpinnerColumn(),
     ) as progress:
-        # 创建总进度任务
-        total_task = progress.add_task(f"[cyan]下载数据中...", total=len(tasks))
+        # 为每个交易对创建进度任务
+        symbol_progress: Dict[str, TaskID] = {}
+        for symbol in symbols:
+            total_days = len(symbol_tasks[symbol])
+            symbol_progress[symbol] = progress.add_task(
+                f"[cyan]{symbol}", total=total_days
+            )
 
         # 使用线程池执行下载任务
         with ThreadPoolExecutor(max_workers=threads) as executor:
-            # 提交所有任务
-            future_to_task = {
-                executor.submit(
-                    process_single_day,
-                    symbol,
-                    date,
-                    fetcher,
-                    data_dir,
-                    market_type,
-                    override,
-                ): (symbol, date)
-                for symbol, date in tasks
-            }
+            future_to_task = {}
+            for symbol, dates in symbol_tasks.items():
+                for date in dates:
+                    future = executor.submit(
+                        process_single_day,
+                        symbol,
+                        date,
+                        fetcher,
+                        data_dir,
+                        market_type,
+                        override,
+                    )
+                    future_to_task[future] = (symbol, date)
 
             # 处理完成的任务
+            errors = []
             for future in as_completed(future_to_task):
                 symbol, date = future_to_task[future]
                 success, message = future.result()
 
-                # 更新进度
-                progress.advance(total_task)
+                # 更新对应交易对的进度
+                progress.advance(symbol_progress[symbol])
 
                 if not success:
-                    typer.echo(message, err=True)
+                    errors.append(message)
 
-    typer.echo("所有数据下载完成！")
+        # 显示所有错误信息
+        if errors:
+            typer.echo("\n错误汇总:")
+            for error in errors:
+                typer.echo(error, err=True)
+
+    typer.echo("\n所有数据下载完成！")
 
 
 if __name__ == "__main__":
