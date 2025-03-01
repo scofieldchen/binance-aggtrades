@@ -2,15 +2,15 @@
 
 import datetime as dt
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import typer
+from rich.console import Console
 from rich.progress import (
     Progress,
     SpinnerColumn,
     BarColumn,
     TextColumn,
-    TimeRemainingColumn,
     TimeElapsedColumn,
     TaskID,
 )
@@ -24,6 +24,7 @@ from src.aggtrades_fetcher import (
 from src.aggtrades_store import write_trades
 
 app = typer.Typer(add_completion=False)
+console = Console()
 
 
 def process_single_day(
@@ -138,21 +139,24 @@ def download(
             symbol_tasks[symbol].append(current_date)
             current_date += dt.timedelta(days=1)
 
+    # 存储错误信息，当进度条完成后再显示，不打断进度条
+    errors = []
+
     # 使用Rich创建进度面板
     with Progress(
-        TextColumn("[progress.description]{task.description}"),
+        TextColumn("[bold blue]{task.description}"),
         BarColumn(),
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeRemainingColumn(),
         TimeElapsedColumn(),
-        SpinnerColumn(),
+        SpinnerColumn(spinner_name="dots"),
     ) as progress:
         # 为每个交易对创建进度任务
         symbol_progress: Dict[str, TaskID] = {}
         for symbol in symbols:
             total_days = len(symbol_tasks[symbol])
             symbol_progress[symbol] = progress.add_task(
-                f"[cyan]{symbol}", total=total_days
+                description=symbol,
+                total=total_days,
             )
 
         # 使用线程池执行下载任务
@@ -183,13 +187,13 @@ def download(
                 if not success:
                     errors.append(message)
 
-        # 显示所有错误信息
-        if errors:
-            typer.echo("\n错误汇总:")
-            for error in errors:
-                typer.echo(error, err=True)
-
-    typer.echo("\n所有数据下载完成！")
+    # 显示错误信息（如果有）
+    if errors:
+        console.print("\n错误汇总:", style="bold red")
+        for error in errors:
+            console.print(f"• {error}", style="red")
+    else:
+        console.print("\n✨ 所有数据下载完成！", style="bold green")
 
 
 if __name__ == "__main__":
