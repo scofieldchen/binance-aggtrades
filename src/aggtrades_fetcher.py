@@ -295,7 +295,7 @@ class HistoricalAggTradesFetcher(AggTradesFetcher):
         url = f"{self.base_url}/{symbol}/{filename}"
 
         # 下载文件
-        response = requests.get(url, stream=True)
+        response = requests.get(url, stream=True, timeout=3)
         response.raise_for_status()  # 如果是404等错误，这里会抛出异常，不会重试
 
         # 使用内存中的BytesIO对象处理zip文件，避免写入磁盘
