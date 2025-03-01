@@ -36,6 +36,17 @@ def download(
         "-m",
         help="市场类型（现货或合约）",
     ),
+    data_source: DataSource = typer.Option(
+        DataSource.HISTORICAL,
+        "--source",
+        help="数据源类型（API或历史数据）",
+    ),
+    data_dir: str = typer.Option(
+        "data",
+        "--data-dir",
+        "-d",
+        help="数据存储目录路径",
+    ),
     override: bool = typer.Option(
         True,
         "--override/--no-override",
@@ -44,17 +55,14 @@ def download(
 ) -> None:
     """下载Binance交易所的聚合历史交易数据。"""
 
+    # 获取并验证日期
     start = start_date.date()
     end = end_date.date()
-
-    # 验证日期范围
     if end < start:
         raise typer.BadParameter("结束日期必须晚于开始日期")
 
     # 创建数据获取器
-    fetcher = AggTradesFetcherFactory.create_fetcher(
-        DataSource.HISTORICAL, market_type=market_type
-    )
+    fetcher = AggTradesFetcherFactory.create_fetcher(data_source, market_type)
 
     # 处理每个交易对
     for symbol in symbols.upper().split(","):
@@ -68,7 +76,7 @@ def download(
 
                 if not trades_df.empty:
                     write_trades(
-                        "data",  # 使用相对路径存储数据
+                        data_dir,
                         market_type,
                         symbol,
                         trades_df,
