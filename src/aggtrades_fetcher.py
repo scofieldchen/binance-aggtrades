@@ -18,14 +18,14 @@ from tenacity import (
 )
 
 
-class DataSource(Enum):
+class DataSource(str, Enum):
     """数据源类型枚举"""
 
     API = "api"
     HISTORICAL = "historical"
 
 
-class MarketType(Enum):
+class MarketType(str, Enum):
     """市场类型枚举"""
 
     SPOT = "spot"

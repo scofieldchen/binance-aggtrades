@@ -37,3 +37,19 @@ https://data.binance.vision/
 布隆过滤器 - 删除
 
 元数据，统计信息 - 删除，以后需要再加入，避免过度优化，考虑使用sqlite存储元数据。
+
+## 优化命令行界面
+
+创建脚本'main.py'，使用 typer 库创建命令行界面
+
+下载交易对的聚合历史交易
+
+参数：
+- symbols：一个或多个货币对，多个货币对用逗号分隔，如BTCUSDT,ETHUSDT
+- start_date: 开始时间，格式'yyyy-mm-dd'
+- end_date: 结束时间
+- market_type: 市场类型，现货或者合约，参考`MarketType`类，默认为现货
+- override: 是否覆盖已有数据，如果是则覆盖现有数据，默认为覆盖数据
+
+示例
+`python main.py --symbols BTCUSDT --start-date 20250101 --end-date 20250130`
