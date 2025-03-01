@@ -18,6 +18,36 @@ from tenacity import (
 )
 
 
+def convert_mixed_timestamps(timestamps: pd.Series) -> pd.Series:
+    """将混合格式（毫秒/微秒）的时间戳序列转换为datetime格式。
+
+    Args:
+        timestamps: 包含时间戳的pandas Series
+
+    Returns:
+        转换后的datetime格式时间戳Series（UTC时区）
+    """
+    # 检查时间戳长度
+    timestamp_length = timestamps.astype(str).str.len()
+    is_13_digit = timestamp_length == 13
+    is_16_digit = timestamp_length == 16
+
+    # 创建结果序列，假设单位是纳秒并设置errors='coerce'，忽略错误
+    result = pd.to_datetime(timestamps, unit="ns", utc=True, errors="coerce")
+
+    # 处理13位时间戳
+    result.loc[is_13_digit] = pd.to_datetime(
+        timestamps.loc[is_13_digit], unit="ms", utc=True
+    )
+
+    # 处理16位时间戳
+    result.loc[is_16_digit] = pd.to_datetime(
+        timestamps.loc[is_16_digit], unit="us", utc=True
+    )
+
+    return result
+
+
 class DataSource(str, Enum):
     """数据源类型枚举"""
 
@@ -322,10 +352,8 @@ class HistoricalAggTradesFetcher(AggTradesFetcher):
                     ],
                 )
 
-        # 处理日期字段，时间戳精确到微妙
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"].astype("int64"), unit="us", utc=True
-        )
+        # 处理日期字段，有时候会返回13位数字的时间戳（毫秒），有时候是16位数字（微秒）
+        df["timestamp"] = convert_mixed_timestamps(df["timestamp"])
 
         # 只保留与API获取器输出一致的列
         return df[["trade_id", "timestamp", "price", "quantity", "is_buyer_maker"]]
