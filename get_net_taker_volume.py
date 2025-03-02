@@ -99,7 +99,7 @@ def calculate_net_taker_volume(
             }
         )
 
-    res = trades.resample(frequency.value).apply(_resample)
+    res = trades.set_index("timestamp").resample(frequency.value).apply(_resample)
 
     return res
 
@@ -108,6 +108,7 @@ def _process_single_date(
     date: dt.date,
     data_dir: str,
     symbol: str,
+    market_type: MarketType,
     frequency: ResampleFrequency,
 ) -> Optional[pd.DataFrame]:
     """读取并处理单日数据，计算净吃单量。
@@ -116,17 +117,18 @@ def _process_single_date(
         date: 要处理的日期
         data_dir: 数据目录路径
         symbol: 交易对符号
-        timeframe: 时间范围
+        market_type: 市场类型
+        frequency: 重采样频率
 
     Returns:
         处理后的DataFrame，如果处理失败则返回None
     """
     try:
-        df = read_daily_aggtrades(data_dir, symbol, date)
+        df = read_daily_aggtrades(data_dir, symbol, date, market_type)
         daily_result = calculate_net_taker_volume(df, frequency)
         return daily_result
     except Exception as e:
-        console.print(f"[yellow]Warning: Failed to process data for {date}: {e}[/]")
+        console.print(f"处理 {date} 的数据时发生错误: {e}", style="yellow")
         return None
 
 
@@ -135,6 +137,7 @@ def process_date_range(
     symbol: str,
     start_date: dt.date,
     end_date: dt.date,
+    market_type: MarketType = MarketType.SPOT,
     frequency: ResampleFrequency = ResampleFrequency.ONE_HOUR,
     processes: int = 1,
 ) -> pd.DataFrame:
@@ -145,7 +148,8 @@ def process_date_range(
         symbol: 交易对符号
         start_date: 开始日期
         end_date: 结束日期
-        timeframe: 时间范围，默认为1小时
+        market_type: 市场类型，默认为现货
+        frequency: 重采样频率，默认为1小时
         processes: 用于并行处理的进程数
 
     Returns:
@@ -162,11 +166,14 @@ def process_date_range(
         with mp.Pool(processes=processes) as pool:
             all_data = pool.starmap(
                 _process_single_date,
-                [(date, data_dir, symbol, frequency) for date in date_range],
+                [
+                    (date, data_dir, symbol, market_type, frequency)
+                    for date in date_range
+                ],
             )
     else:
         all_data = [
-            _process_single_date(date, data_dir, symbol, frequency)
+            _process_single_date(date, data_dir, symbol, market_type, frequency)
             for date in date_range
         ]
 
@@ -219,21 +226,17 @@ def main(
     t0 = time.time()
 
     try:
-        trades = read_daily_aggtrades(data_dir, symbol, start_date, market_type)
-        print(trades.head())
-        print(trades.tail())
+        # 并行处理数据
+        result = process_date_range(
+            data_dir, symbol, start_date, end_date, market_type, frequency, processes
+        )
 
-        # result = process_date_range(
-        #     data_dir, symbol, start_date, end_date, frequency, processes
-        # )
-
-        # # Display result summary
-        # console.print("\n[bold]Result Summary:[/]")
-        # console.print(f"Total records: {len(result)}")
-        # console.print("\n[bold]First 5 records:[/]")
-        # console.print(result.head())
-        # console.print("\n[bold]Last 5 records:[/]")
-        # console.print(result.tail())
+        # 展示结果
+        console.print("\n结果汇总:", style="bold")
+        console.print("\n前面5行:", style="bold")
+        console.print(result.head())
+        console.print("\n后面5行:", style="bold")
+        console.print(result.tail())
 
         # # Save to CSV if output file is specified
         # if output_csv:
@@ -243,7 +246,7 @@ def main(
         # console.print(f"Tasks completed in {time.time() - t0:.2f} seconds")
 
     except Exception as e:
-        console.print(f"[red]Processing error: {e}[/]")
+        console.print(f"程序异常: {e}", style="red")
         raise typer.Exit(code=1)
 
 
