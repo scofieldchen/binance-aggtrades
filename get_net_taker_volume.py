@@ -11,6 +11,7 @@ from rich.console import Console
 
 from src.aggtrades_fetcher import MarketType
 
+app = typer.Typer(help="计算加密货币交易的净吃单量", add_completion=False)
 console = Console()
 
 
@@ -189,7 +190,27 @@ def process_date_range(
     return result
 
 
-app = typer.Typer(help="计算加密货币交易的净吃单量", add_completion=False)
+def generate_output_filename(
+    symbol: str,
+    market_type: MarketType,
+    frequency: ResampleFrequency,
+    year: Optional[int] = None,
+) -> str:
+    """生成输出文件名。
+
+    Args:
+        symbol: 交易对名称
+        market_type: 市场类型
+        frequency: 重采样频率
+        year: 年份,如果指定则生成该年份的文件名
+
+    Returns:
+        输出文件名
+    """
+    base_name = f"net_taker_{market_type.value}_{symbol}_{frequency.value}"
+    if year is not None:
+        return f"{base_name}_{year}.csv"
+    return f"{base_name}.csv"
 
 
 @app.command()
@@ -212,16 +233,14 @@ def main(
     frequency: ResampleFrequency = typer.Option(
         ResampleFrequency.ONE_HOUR, help="重采样频率"
     ),
-    output_csv: Optional[Path] = typer.Option(None, help="输出 CSV 文件路径"),
     processes: int = typer.Option(1, help="用于并行处理的进程数"),
+    group_by_year: bool = typer.Option(False, help="是否按年份分组保存数据"),
 ) -> None:
     """计算指定日期范围内的净吃单量并输出结果。"""
     start_date = start_date.date()
     end_date = end_date.date()
 
-    console.print(
-        f"Processing {symbol} data from {start_date} to {end_date} using {processes} processes..."
-    )
+    console.print("处理数据...")
 
     t0 = time.time()
 
@@ -238,12 +257,22 @@ def main(
         console.print("\n后面5行:", style="bold")
         console.print(result.tail())
 
-        # # Save to CSV if output file is specified
-        # if output_csv:
-        #     result.to_csv(output_csv, index=True)
-        #     console.print(f"\nResults saved to: {output_csv}")
+        # 保存结果
+        if group_by_year:
+            # 按年份分组保存
+            for year, year_data in result.groupby(result.index.year):
+                filename = generate_output_filename(
+                    symbol, market_type, frequency, year
+                )
+                year_data.to_csv(filename, index=True)
+                console.print(f"\n{year}年数据已保存至: {filename}")
+        else:
+            # 保存为单个文件
+            filename = generate_output_filename(symbol, market_type, frequency)
+            result.to_csv(filename, index=True)
+            console.print(f"\n结果已保存至: {filename}")
 
-        # console.print(f"Tasks completed in {time.time() - t0:.2f} seconds")
+        console.print(f"\n任务完成，耗时 {time.time() - t0:.2f} 秒")
 
     except Exception as e:
         console.print(f"程序异常: {e}", style="red")
