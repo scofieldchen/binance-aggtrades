@@ -9,12 +9,14 @@ import pandas as pd
 import typer
 from rich.console import Console
 
+from src.aggtrades_fetcher import MarketType
+
 console = Console()
 
 
-class TimeFrame(str, Enum):
+class ResampleFrequency(str, Enum):
     """
-    K线时间框架枚举类，成员的值与 pandas.resample 的重采样频率相对应。
+    数据重采样的频率，成员的值与 pandas.resample 的重采样频率相对应。
     """
 
     ONE_MINUTE = "1min"  # 1 分钟
@@ -26,7 +28,9 @@ class TimeFrame(str, Enum):
     ONE_DAY = "D"  # 1 天
 
 
-def read_daily_aggtrades(data_dir: str, symbol: str, date: dt.date) -> pd.DataFrame:
+def read_daily_aggtrades(
+    data_dir: str, symbol: str, date: dt.date, market_type: MarketType = MarketType.SPOT
+) -> pd.DataFrame:
     """读取指定交易对和日期的聚合交易数据。
 
     从数据目录中读取特定交易对和日期的所有聚合交易数据文件，
@@ -36,6 +40,7 @@ def read_daily_aggtrades(data_dir: str, symbol: str, date: dt.date) -> pd.DataFr
         data_dir: 数据目录路径
         symbol: 交易对符号，如 "BTCUSDT"
         date: 要读取的日期
+        market_type: 市场数据类型，spot, futures
 
     Returns:
         包含该日期所有聚合交易数据的DataFrame，按时间戳排序
@@ -44,36 +49,23 @@ def read_daily_aggtrades(data_dir: str, symbol: str, date: dt.date) -> pd.DataFr
         FileNotFoundError: 当指定日期的数据目录不存在时抛出
         ValueError: 当指定日期没有找到任何数据文件时抛出
     """
-    data_path_by_symbol_date = (
+    data_path = (
         Path(data_dir)
-        / f"symbol={symbol}"
-        / f"year={date.year:04d}"
-        / f"month={date.month:02d}"
-        / f"day={date.day:02d}"
+        / f"{market_type.value}"
+        / f"{symbol}"
+        / f"{date.year:04d}"
+        / f"{date.month:02d}"
+        / f"{symbol}_{date:%Y%m%d}.parquet"
     )
 
-    # 检查目录是否存在
-    if not data_path_by_symbol_date.exists():
-        raise FileNotFoundError(f"Data directory not found: {data_path_by_symbol_date}")
+    if not data_path.exists():
+        raise FileNotFoundError(f"无法找到文件: {data_path}")
 
-    # 获取所有parquet文件
-    files = list(data_path_by_symbol_date.glob("*.parquet"))
-
-    # 检查是否有数据文件
-    if not files:
-        raise ValueError(f"No parquet files found in {data_path_by_symbol_date}")
-
-    # 读取并合并所有文件
-    df = pd.concat((pd.read_parquet(file) for file in files))
-
-    df.set_index("timestamp", inplace=True)
-    df.sort_index(inplace=True)
-
-    return df
+    return pd.read_parquet(data_path)
 
 
 def calculate_net_taker_volume(
-    trades: pd.DataFrame, timeframe: TimeFrame
+    trades: pd.DataFrame, frequency: ResampleFrequency
 ) -> pd.DataFrame:
     """计算指定时间范围内的净吃单量。
 
@@ -107,7 +99,7 @@ def calculate_net_taker_volume(
             }
         )
 
-    res = trades.resample(timeframe.value).apply(_resample)
+    res = trades.resample(frequency.value).apply(_resample)
 
     return res
 
@@ -116,7 +108,7 @@ def _process_single_date(
     date: dt.date,
     data_dir: str,
     symbol: str,
-    timeframe: TimeFrame,
+    frequency: ResampleFrequency,
 ) -> Optional[pd.DataFrame]:
     """读取并处理单日数据，计算净吃单量。
 
@@ -131,7 +123,7 @@ def _process_single_date(
     """
     try:
         df = read_daily_aggtrades(data_dir, symbol, date)
-        daily_result = calculate_net_taker_volume(df, timeframe)
+        daily_result = calculate_net_taker_volume(df, frequency)
         return daily_result
     except Exception as e:
         console.print(f"[yellow]Warning: Failed to process data for {date}: {e}[/]")
@@ -143,7 +135,7 @@ def process_date_range(
     symbol: str,
     start_date: dt.date,
     end_date: dt.date,
-    timeframe: TimeFrame = TimeFrame.ONE_HOUR,
+    frequency: ResampleFrequency = ResampleFrequency.ONE_HOUR,
     processes: int = 1,
 ) -> pd.DataFrame:
     """处理指定日期范围内的交易数据并计算净吃单量。
@@ -170,11 +162,11 @@ def process_date_range(
         with mp.Pool(processes=processes) as pool:
             all_data = pool.starmap(
                 _process_single_date,
-                [(date, data_dir, symbol, timeframe) for date in date_range],
+                [(date, data_dir, symbol, frequency) for date in date_range],
             )
     else:
         all_data = [
-            _process_single_date(date, data_dir, symbol, timeframe)
+            _process_single_date(date, data_dir, symbol, frequency)
             for date in date_range
         ]
 
@@ -207,7 +199,12 @@ def main(
         help="结束日期 (YYYY-MM-DD)",
         formats=["%Y-%m-%d"],
     ),
-    timeframe: TimeFrame = typer.Option(TimeFrame.ONE_HOUR, help="时间范围"),
+    market_type: MarketType = typer.Option(
+        MarketType.SPOT, help="市场类型，现货或者合约"
+    ),
+    frequency: ResampleFrequency = typer.Option(
+        ResampleFrequency.ONE_HOUR, help="重采样频率"
+    ),
     output_csv: Optional[Path] = typer.Option(None, help="输出 CSV 文件路径"),
     processes: int = typer.Option(1, help="用于并行处理的进程数"),
 ) -> None:
@@ -222,24 +219,28 @@ def main(
     t0 = time.time()
 
     try:
-        result = process_date_range(
-            data_dir, symbol, start_date, end_date, timeframe, processes
-        )
+        trades = read_daily_aggtrades(data_dir, symbol, start_date, market_type)
+        print(trades.head())
+        print(trades.tail())
 
-        # Display result summary
-        console.print("\n[bold]Result Summary:[/]")
-        console.print(f"Total records: {len(result)}")
-        console.print("\n[bold]First 5 records:[/]")
-        console.print(result.head())
-        console.print("\n[bold]Last 5 records:[/]")
-        console.print(result.tail())
+        # result = process_date_range(
+        #     data_dir, symbol, start_date, end_date, frequency, processes
+        # )
 
-        # Save to CSV if output file is specified
-        if output_csv:
-            result.to_csv(output_csv, index=True)
-            console.print(f"\nResults saved to: {output_csv}")
+        # # Display result summary
+        # console.print("\n[bold]Result Summary:[/]")
+        # console.print(f"Total records: {len(result)}")
+        # console.print("\n[bold]First 5 records:[/]")
+        # console.print(result.head())
+        # console.print("\n[bold]Last 5 records:[/]")
+        # console.print(result.tail())
 
-        console.print(f"Tasks completed in {time.time() - t0:.2f} seconds")
+        # # Save to CSV if output file is specified
+        # if output_csv:
+        #     result.to_csv(output_csv, index=True)
+        #     console.print(f"\nResults saved to: {output_csv}")
+
+        # console.print(f"Tasks completed in {time.time() - t0:.2f} seconds")
 
     except Exception as e:
         console.print(f"[red]Processing error: {e}[/]")
